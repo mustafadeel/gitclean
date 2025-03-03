@@ -1,10 +1,10 @@
 # Installation
 To use this hook:
 
-Save the script as .git/hooks/pre-commit in your repository
-Make it executable with chmod +x .git/hooks/pre-commit
+Save the script as `.git/hooks/pre-commit` in your repository
+Make it executable with `chmod +x .git/hooks/pre-commit`
 
-The hook will automatically create the Python scanner script in .git/tools/secret_scanner.py when first run.
+The hook will automatically create the Python scanner script in `.git/tools/secret_scanner.py` when first run and will subsequently use that file. So that would be where you can tinker with your edits.
 
 # Introduction
 This pre-commit hook will:
@@ -18,12 +18,12 @@ Everything runs locally on your machine!
 # Supported Secrets
 The Python script includes regex patterns to detect common secrets like:
 
-AWS keys
-Private keys
-API keys
-GitHub tokens
-Password assignments
-Connection strings
-Auth0 Secrets
-Stripe Secrets
-Generic secrets
+- AWS keys
+- Private keys
+- API keys
+- GitHub tokens
+- Password assignments
+- Connection strings
+- Auth0 Secrets
+- Stripe Secrets
+- Generic secrets
