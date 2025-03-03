@@ -1,0 +1,141 @@
+#!/bin/bash
+
+# Pre-commit hook to detect potential secrets in files being committed
+# Save this file as .git/hooks/pre-commit and make it executable:
+# chmod +x .git/hooks/pre-commit
+
+# Path to Python script that does the actual scanning
+SCANNER_SCRIPT=".git/tools/secret_scanner.py"
+
+# Create the scanner script if it doesn't exist
+if [ ! -f "$SCANNER_SCRIPT" ]; then
+    mkdir -p "$(dirname "$SCANNER_SCRIPT")"
+    cat > "$SCANNER_SCRIPT" << 'EOL'
+#!/usr/bin/env python3
+"""
+Scans files for potential secrets using regex patterns.
+"""
+import re
+import sys
+import os
+from typing import List, Tuple, Dict
+
+# Regex patterns for common secrets
+SECRET_PATTERNS = {
+    "AWS Key": r"AKIA[0-9A-Z]{16}",
+    "AWS Secret": r"(?<!sha512-)[0-9a-zA-Z/+]{40}(?![=a-zA-Z0-9/+])",
+    "Private Key": r"-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----",
+    "SSH Key": r"ssh-rsa AAAA[0-9A-Za-z+/]+[=]{0,3}",
+    "GitHub Token": r"github[_\s]?token[_\s]?[0-9a-zA-Z]{35,40}",
+    "API Key": r"api[_\s]?key[_\s]?[0-9a-zA-Z]{16,45}",
+    "Generic Secret": r"secret[_\s]?[0-9a-zA-Z]{16,45}",
+    "Password Assignment": r"(?:password|passwd|pwd)[_\s]?[=:].+",
+    "Authorization Header": r"Authorization[_\s]?[=:][\s]?['\"]?Bearer\s+[A-Za-z0-9-._~+/]+=*['\"]?",
+    "Connection String": r"[a-zA-Z]{3,10}:\/\/[^\/\s:@]{3,20}:[^\/\s:@]{3,20}@.{4,30}",
+    "Generic Token": r"[a-z0-9]{32,64}",
+    "Auth0 Client Secret": r"(?:auth0[_\s]?client[_\s]?secret|client[_\s]?secret)[_\s]?[=:]\s*['\"]?([a-zA-Z0-9_]{64})['\"]?",
+    "Auth0 Secret Pattern": r"\b[a-zA-Z0-9_]{64}\b",
+    "Stripe Live Key": r"sk_live_[a-zA-Z0-9]{10,}"
+}
+
+def scan_file_content(file_path: str, content: str) -> List[Tuple[str, int, str]]:
+    """
+    Scan file content for potential secrets.
+    
+    Args:
+        file_path: Path to the file being scanned
+        content: Content of the file
+    
+    Returns:
+        List of tuples containing (file_path, line_number, matched_pattern_name)
+    """
+    findings = []
+    lines = content.split("\n")
+    
+    for i, line in enumerate(lines):
+        # Skip comments in most programming languages
+        if line.strip().startswith(('#', '//', '/*', '*', '<!--')):
+            continue
+            
+        for pattern_name, pattern in SECRET_PATTERNS.items():
+            matches = re.findall(pattern, line)
+            if matches:
+                findings.append((file_path, i + 1, pattern_name))
+                break  # Only report one issue per line
+                
+    return findings
+
+def main():
+    """
+    Main function to process files passed as command line arguments.
+    """
+    if len(sys.argv) < 2:
+        print("Usage: python secret_scanner.py <file1> <file2> ...")
+        return 1
+        
+    files_to_scan = sys.argv[1:]
+    all_findings = []
+    
+    for file_path in files_to_scan:
+        # Skip binary files and non-existing files
+        if not os.path.isfile(file_path) or os.path.getsize(file_path) > 1024 * 1024:  # Skip files > 1MB
+            continue
+            
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            findings = scan_file_content(file_path, content)
+            all_findings.extend(findings)
+        except UnicodeDecodeError:
+            # Skip binary files that couldn't be decoded as text
+            continue
+    
+    # Report findings
+    if all_findings:
+        print("\033[31m⚠️  POTENTIAL SECRETS DETECTED ⚠️\033[0m")
+        print("\nThe following files may contain secrets or sensitive information:")
+        
+        for file_path, line_number, pattern_name in all_findings:
+            print(f"\033[33m{file_path}:{line_number}\033[0m - Potential {pattern_name}")
+            
+        print("\nPlease review these files before committing.")
+        return 1
+    
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOL
+
+    # Make the script executable
+    chmod +x "$SCANNER_SCRIPT"
+    echo "Created secret scanner script at $SCANNER_SCRIPT"
+fi
+
+echo "Running secret detection scan..."
+
+# Get list of staged files that are being committed
+FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -v "^\.git/")
+
+if [ -z "$FILES" ]; then
+    echo "No files to scan."
+    exit 0
+fi
+
+# Run the Python scanner on staged files
+python3 "$SCANNER_SCRIPT" $FILES
+
+# Check if the scanner found any potential secrets
+if [ $? -ne 0 ]; then
+    echo
+    read -p "Potential secrets were found. Do you want to proceed with the commit anyway? (y/N): " response
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo "Commit aborted."
+        exit 1
+    fi
+    echo "Proceeding with commit despite potential secrets..."
+fi
+
+# Allow the commit to proceed
+exit 0
